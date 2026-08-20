@@ -26,6 +26,9 @@ No dependencies outside the standard library.
 go install github.com/karen-m361/sse-relay@latest
 ```
 
+(`.../sse-relay/cmd/sse-relay@latest` builds the identical binary, for tool
+manifests that pin by package path instead of module path.)
+
 ## Usage
 
 ```bash
