@@ -2,6 +2,8 @@ package hub
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -210,6 +212,65 @@ func TestCloseDetachesSubscriberWithoutError(t *testing.T) {
 
 	// Closing twice must not panic or re-fire the once.
 	sub.Close()
+}
+
+// TestConcurrentSubscribersReceiveAllEvents is a small load test: many readers
+// attached before a moment of sustained writing, none of them sharing state
+// with each other, each expected to see the full sequence in order. It is the
+// scenario the buffered-channel design exists for, so it is worth exercising
+// with -race rather than trusting the single-goroutine tests above.
+func TestConcurrentSubscribersReceiveAllEvents(t *testing.T) {
+	const subscribers = 50
+	const events = 200
+
+	s := newStream("s", 0)
+
+	subs := make([]*Subscription, subscribers)
+	for i := range subs {
+		// Buffer big enough that no subscriber lags and gets dropped: this
+		// test is about fan-out correctness, not the eviction path already
+		// covered by TestLaggingSubscriberIsDroppedNotBlocked.
+		sub, gap := s.Subscribe(0, events+1)
+		if gap {
+			t.Fatal("fresh stream reported a gap")
+		}
+		subs[i] = sub
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(subscribers)
+	errs := make(chan error, subscribers)
+	for _, sub := range subs {
+		go func(sub *Subscription) {
+			defer wg.Done()
+			defer sub.Close()
+
+			var want uint64 = 1
+			for ev := range sub.Events() {
+				if ev.ID != want || ev.Data != fmt.Sprintf("chunk-%d", want-1) {
+					errs <- fmt.Errorf("event %d: got %+v, want id %d chunk-%d", want, ev, want, want-1)
+					return
+				}
+				want++
+			}
+			if want != events+1 {
+				errs <- fmt.Errorf("channel closed after %d of %d events", want-1, events)
+			}
+		}(sub)
+	}
+
+	for i := 0; i < events; i++ {
+		if _, err := s.Publish(fmt.Sprintf("chunk-%d", i)); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+	}
+	s.Finish()
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }
 
 func TestHubGetOrCreateReturnsSameStream(t *testing.T) {
