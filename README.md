@@ -156,6 +156,20 @@ On `SIGINT` or `SIGTERM` the relay finishes every stream first, so open
 subscriptions receive `event: done` and terminate normally, and only then waits
 for the HTTP server to drain.
 
+## Example client
+
+`examples/subscribe` is a small standalone SSE client that shows what
+`Last-Event-ID` resumption looks like from the consumer side: on any dropped
+connection it reconnects using the id of the last event it actually saw, so a
+restarted server or a flaky network never turns into a gap in the output.
+
+```bash
+go run ./examples/subscribe -stream chat-42
+```
+
+Start it mid-conversation with `-last-event-id 2` to see it pick up only the
+chunks published after that point, the same way a reloaded browser tab would.
+
 ## Test
 
 ```bash
